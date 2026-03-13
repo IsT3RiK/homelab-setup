@@ -46,11 +46,25 @@ elif [ "${RAM_PCT:-0}" -ge 60 ]; then RAM_COLOR="$YELLOW"
 else RAM_COLOR="$GREEN"
 fi
 
-# ── Disques montés (hors tmpfs/overlay/squashfs) ──────────────────────────────
+# ── Disques montés ────────────────────────────────────────────────────────────
+# - Exclut tmpfs, overlay, squashfs, devtmpfs, udev
+# - Exclut les pseudo-fs système (/dev, /sys, /proc, /run)
+# - Exclut les sous-montages (garde seulement les points de montage à ≤ 2 niveaux
+#   ou les disques physiques identifiables)
+# - Supprime la ligne header avec grep -v "^Mounted"
 DISKS=$(df -h --output=target,size,used,avail,pcent 2>/dev/null \
-    | grep -v -E "^(Filesystem|tmpfs|devtmpfs|overlay|squashfs|udev)" \
-    | grep -v -E "^/(dev|sys|proc|run)" \
-    | tail -n +1)
+    | grep -v -E "^(Mounted|tmpfs|devtmpfs|overlay|squashfs|udev)" \
+    | grep -v -E "^\s*(Filesystem)" \
+    | grep -v -E "^/(dev|sys|proc|run|snap)(\s|/)" \
+    | awk '{
+        mount=$1
+        # Compter le nombre de "/" dans le chemin de montage
+        n = gsub("/","/",$1)
+        # Garder seulement les montages avec <= 2 niveaux de profondeur
+        # ex: /  /boot  /mnt/data  → oui
+        # ex: /mnt/Nas/APP_DATA/Plex → non
+        if (n <= 2) print mount, $2, $3, $4, $5
+    }')
 
 # ── Utilisateurs locaux (UID >= 1000, hors nobody) ────────────────────────────
 USERS=$(awk -F: '$3>=1000 && $1!="nobody" {print $1}' /etc/passwd 2>/dev/null | tr '\n' ' ')
@@ -91,9 +105,14 @@ if [ -n "$DISKS" ]; then
         USED=$(echo  "$line" | awk '{print $3}')
         AVAIL=$(echo "$line" | awk '{print $4}')
         PCT=$(echo   "$line" | awk '{print $5}' | tr -d '%')
-        if   [ "${PCT:-0}" -ge 85 ]; then DCOL="$RED"
-        elif [ "${PCT:-0}" -ge 60 ]; then DCOL="$YELLOW"
-        else DCOL="$GREEN"
+        # Vérifier que PCT est bien un nombre avant la comparaison
+        if [[ "$PCT" =~ ^[0-9]+$ ]]; then
+            if   [ "$PCT" -ge 85 ]; then DCOL="$RED"
+            elif [ "$PCT" -ge 60 ]; then DCOL="$YELLOW"
+            else DCOL="$GREEN"
+            fi
+        else
+            DCOL="$GREEN"
         fi
         echo -e "   ${GRAY}   ├─ ${CYAN}${MOUNT}${RESET}  ${DCOL}${USED}/${SIZE} (${PCT}%) — ${AVAIL} libres${RESET}"
     done <<< "$DISKS"
