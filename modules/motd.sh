@@ -47,22 +47,13 @@ else RAM_COLOR="$GREEN"
 fi
 
 # ── Disques montés ────────────────────────────────────────────────────────────
-# - Exclut tmpfs, overlay, squashfs, devtmpfs, udev
-# - Exclut les pseudo-fs système (/dev, /sys, /proc, /run)
-# - Exclut les sous-montages (garde seulement les points de montage à ≤ 2 niveaux
-#   ou les disques physiques identifiables)
-# - Supprime la ligne header avec grep -v "^Mounted"
 DISKS=$(df -h --output=target,size,used,avail,pcent 2>/dev/null \
     | grep -v -E "^(Mounted|tmpfs|devtmpfs|overlay|squashfs|udev)" \
     | grep -v -E "^\s*(Filesystem)" \
     | grep -v -E "^/(dev|sys|proc|run|snap)(\s|/)" \
     | awk '{
         mount=$1
-        # Compter le nombre de "/" dans le chemin de montage
         n = gsub("/","/",$1)
-        # Garder seulement les montages avec <= 2 niveaux de profondeur
-        # ex: /  /boot  /mnt/data  → oui
-        # ex: /mnt/Nas/APP_DATA/Plex → non
         if (n <= 2) print mount, $2, $3, $4, $5
     }')
 
@@ -84,7 +75,7 @@ PORTS=$(ss -tlnp 2>/dev/null \
 
 # ═══════════════════════════════════════════════════════════════════════════════
 echo ""
-echo -e " ${BOLD}${GREEN}${SERVICE_LABEL}${RESET}  ${GRAY}[${VIRT_TYPE}]${RESET}"
+echo -e " ${BOLD}${GREEN}##SERVICE_LABEL##${RESET}  ${GRAY}[${VIRT_TYPE}]${RESET}"
 echo -e " ${GRAY}────────────────────────────────────────────────────${RESET}"
 echo -e "   ${WHITE}🖥️   OS        ${RESET}${BOLD}${GREEN}${OS_NAME}${RESET}"
 echo -e "   ${WHITE}🏠  Hostname  ${RESET}${BOLD}${CYAN}${HOSTNAME}${RESET}"
@@ -105,7 +96,6 @@ if [ -n "$DISKS" ]; then
         USED=$(echo  "$line" | awk '{print $3}')
         AVAIL=$(echo "$line" | awk '{print $4}')
         PCT=$(echo   "$line" | awk '{print $5}' | tr -d '%')
-        # Vérifier que PCT est bien un nombre avant la comparaison
         if [[ "$PCT" =~ ^[0-9]+$ ]]; then
             if   [ "$PCT" -ge 85 ]; then DCOL="$RED"
             elif [ "$PCT" -ge 60 ]; then DCOL="$YELLOW"
@@ -143,10 +133,60 @@ if [ -n "$PORTS" ]; then
     echo -e "   ${GRAY}   └─ ${YELLOW}${PORTS}${RESET}"
 fi
 
+# ── Docker containers ─────────────────────────────────────────────────────────
+if command -v docker &>/dev/null; then
+    DOCKER_OUT=$(docker ps --format "{{.Names}}\t{{.Status}}\t{{.Image}}" 2>/dev/null)
+    if [ -n "$DOCKER_OUT" ]; then
+        echo ""
+        echo -e "   ${WHITE}🐳  Docker — containers en cours${RESET}"
+        while IFS=$'\t' read -r cname cstatus cimage; do
+            short_image=$(echo "$cimage" | awk -F'/' '{print $NF}' | cut -d: -f1)
+            echo -e "   ${GRAY}   ├─ ${GREEN}● ${CYAN}${cname}${RESET}  ${GRAY}${cstatus}  (${short_image})${RESET}"
+        done <<< "$DOCKER_OUT"
+    fi
+fi
+
+# ── Proxmox VMs / LXC ─────────────────────────────────────────────────────────
+if command -v qm &>/dev/null || command -v pct &>/dev/null; then
+    PVE_ITEMS=()
+    if command -v qm &>/dev/null; then
+        while IFS= read -r line; do
+            vmid=$(awk '{print $1}' <<< "$line")
+            name=$(awk '{print $2}' <<< "$line")
+            status=$(awk '{print $3}' <<< "$line")
+            [ "$status" = "running" ] && PVE_ITEMS+=("$(printf "VM %-4s  %-16s" "$vmid" "$name")")
+        done < <(qm list 2>/dev/null | tail -n +2)
+    fi
+    if command -v pct &>/dev/null; then
+        while IFS= read -r line; do
+            ctid=$(awk '{print $1}' <<< "$line")
+            status=$(awk '{print $2}' <<< "$line")
+            ctname=$(awk '{print $NF}' <<< "$line")
+            [ "$status" = "running" ] && PVE_ITEMS+=("$(printf "CT %-4s  %-16s" "$ctid" "$ctname")")
+        done < <(pct list 2>/dev/null | tail -n +2)
+    fi
+    if [ ${#PVE_ITEMS[@]} -gt 0 ]; then
+        echo ""
+        echo -e "   ${WHITE}📦  Proxmox — ${#PVE_ITEMS[@]} VM/LXC en cours${RESET}"
+        col=0
+        line_buf="   "
+        for item in "${PVE_ITEMS[@]}"; do
+            line_buf+="${GREEN}● ${CYAN}${item}${RESET}   "
+            col=$((col + 1))
+            if [ $((col % 3)) -eq 0 ]; then
+                echo -e "$line_buf"
+                line_buf="   "
+                col=0
+            fi
+        done
+        [ "$col" -gt 0 ] && echo -e "$line_buf"
+    fi
+fi
+
 echo ""
 MOTD_SCRIPT
 
-sed -i "s|SERVICE_LABEL|${SERVICE_NAME}|g" /etc/profile.d/99-custom-motd.sh
+sed -i "s|##SERVICE_LABEL##|${SERVICE_NAME}|g" /etc/profile.d/99-custom-motd.sh
 chmod +x /etc/profile.d/99-custom-motd.sh
 
 echo -e " \e[32m✔\e[0m MOTD installé pour : ${SERVICE_NAME}"
