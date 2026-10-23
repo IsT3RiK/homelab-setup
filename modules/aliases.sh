@@ -13,6 +13,10 @@ cat > "$ALIASES_FILE" << 'ALIASES'
 #!/bin/bash
 # ── Homelab aliases — IsT3RiK ─────────────────────────────────────────────────
 
+# Uniquement pour un shell bash interactif
+[ -n "$BASH_VERSION" ] || return 0 2>/dev/null || exit 0
+[[ $- == *i* ]] || return 0
+
 # Navigation / listing
 alias ll='ls -lhF --color=auto'
 alias la='ls -lhAF --color=auto'
@@ -34,14 +38,23 @@ alias ping='ping -c 4'
 
 # Système
 alias df='df -h'
-alias du='du -h --max-depth=1'
+alias du='du -h'
+alias du1='du -h --max-depth=1'            # taille des sous-dossiers
 alias free='free -h'
-alias ps='ps auxf'
-alias top='htop 2>/dev/null || top'
+alias psf='ps auxf'                        # arbre des processus
+command -v htop &>/dev/null && alias top='htop'
 
-# Logs
-alias syslog='tail -f /var/log/syslog'
-alias authlog='tail -f /var/log/auth.log'
+# Logs (journald si rsyslog absent, cas par défaut depuis Debian 12)
+if [ -f /var/log/syslog ]; then
+    alias syslog='tail -f /var/log/syslog'
+else
+    alias syslog='journalctl -f'
+fi
+if [ -f /var/log/auth.log ]; then
+    alias authlog='tail -f /var/log/auth.log'
+else
+    alias authlog='journalctl -f _COMM=sshd _COMM=sshd-session _COMM=sudo _COMM=su'
+fi
 alias journald='journalctl -f'
 
 # Services systemd
@@ -71,11 +84,11 @@ alias glog='git log --oneline --graph --decorate -20'
 # Utilitaires
 alias h='history | grep'
 alias path='echo $PATH | tr ":" "\n"'
-alias reload='source ~/.bashrc && source /etc/profile'
+alias reload='source ~/.bashrc && source /etc/profile.d/98-homelab-aliases.sh'
 alias cls='clear'
 ALIASES
 
-chmod +x "$ALIASES_FILE"
+chmod 644 "$ALIASES_FILE"
 
 echo -e " ${GREEN}✔${RESET} Aliases installés dans ${ALIASES_FILE}"
 echo -e " ${YELLOW}→${RESET} Actifs dès la prochaine connexion SSH (ou : source ${ALIASES_FILE})"
